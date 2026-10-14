@@ -3,6 +3,7 @@ a CLI tool to compute and/or apply a palette to multiple images
 
 ## Build
 Requires xmake and raylib for build.
+
 Build:
 ```
 xmake
@@ -19,7 +20,7 @@ Options:
   -h [ --help ]         produce help
   -d [ --div ] arg      resolution divider
   -c [ --colors ] arg   color count
-  -p [ --palette ] arg  palette image or either predefined value CGA0, CGA1, CGA5 or EGA
+  -p [ --palette ] arg  palette image or either predefined value CGA0, CGA1, CGA5, EGA or GB
 ```
 
 ## Examples
@@ -33,5 +34,5 @@ retrogfx -p EGA input/*.png
 ```
 
 ## Samples
-From left to right: VGA (one shared 256 colors palette computed from all input images), EGA, three different CGA palettes
+From left to right: VGA (one shared 256 colors palette computed from all input images), EGA, three different CGA palettes and Gameboy
 ![sample](samples/montage.png)
