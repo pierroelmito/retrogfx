@@ -174,39 +174,59 @@ inline float cw(const auto &a) {
   return tv / tw;
 }
 
-bool palettize(Image &img, const std::vector<PColor> &pal) {
-  const float pnoise = 0.17f;
-  const float pswing = 0.71f;
-  const auto nearest = [&pal](const PColor c) {
-    size_t ri = 0;
-    auto md = distP(pal[0], c);
-    for (size_t i = 0; i < pal.size(); ++i) {
-      const auto &col = pal[i];
-      const auto cd = distP(col, c);
-      if (md > cd) {
-        md = cd;
-        ri = i;
-      }
+PColor randColor(float l) {
+  const float a = PI * ((rand() % 1024) / 1024.0f - 0.5f);
+  const float b = 2.0f * PI * (rand() % 1024) / 1024.0f;
+  const float ca = cosf(a);
+  const float sa = sinf(a);
+  const float cb = cosf(b);
+  const float sb = sinf(b);
+  const float x = ca * cb;
+  const float y = ca * sb;
+  const float z = sa;
+  l = l * (rand() % 1024) / 1024.0f;
+  return PColor{
+      l * x,
+      l * y,
+      l * z,
+  };
+}
+
+size_t nearest(const PColor c, const std::vector<PColor> &pal) {
+  size_t ri = 0;
+  auto md = distP(pal[0], c);
+  for (size_t i = 0; i < pal.size(); ++i) {
+    const auto &col = pal[i];
+    const auto cd = distP(col, c);
+    if (md > cd) {
+      md = cd;
+      ri = i;
     }
-    return ri;
+  }
+  return ri;
+}
+
+PColor modulate(PColor co, PColor cn, int x, int y, int i, float pnoise,
+                float pwing) {
+  const auto d = co - cn;
+  const float flag = cw(std::vector<std::pair<float, float>>{
+      {9.0f, float(((x ^ y) ^ i) & 1)},
+      //{2.0f, float(((x / 2) ^ (y / 2)) & 1)},
+      {1.0f, float((rand() % 1024) / 1023.0f)},
+  });
+  const float l = flag * pnoise * Vector3Length(d);
+  return co + d * (flag * pwing) + randColor(l);
+}
+
+PColor exact(uint8_t r, uint8_t g, uint8_t b) {
+  return PColor{
+      float(r) / 256.0f,
+      float(g) / 256.0f,
+      float(b) / 256.0f,
   };
-  const auto exact = [](uint8_t v) -> float { return float(v) / float(256); };
-  const auto modulate = [&](PColor co, PColor cn, int x, int y,
-                            float ofs) -> PColor {
-    const auto d = co - cn;
-    const float flag = cw(std::vector<std::pair<float, float>>{
-        {7.0f, float((x ^ y) & 1)},
-        {1.0f, float(((x / 2) ^ (y / 2)) & 1)},
-        {1.0f, float((rand() % 1024) / 1023.0f)},
-    });
-    const float l = flag * pnoise * Vector3Length(d);
-    co.x += l * (((rand() % 1024) / 1023.0f) - 0.5f);
-    co.y += l * (((rand() % 1024) / 1023.0f) - 0.5f);
-    co.z += l * (((rand() % 1024) / 1023.0f) - 0.5f);
-    return co + d * (flag * ofs);
-  };
-  const float mul = 100.0f / float(img.width * img.height);
-  auto const pixels = (uint8_t *)img.data;
+};
+
+bool palettize(Image &img, const std::vector<PColor> &pal) {
   const auto stride = [&]() {
     if (img.format == PIXELFORMAT_UNCOMPRESSED_R8G8B8)
       return 3;
@@ -215,22 +235,38 @@ bool palettize(Image &img, const std::vector<PColor> &pal) {
     return 0;
   }();
   if (stride == 0) {
-    Log("Unsupported format: %d", img.format);
+    Log("  Unsupported format: %d", img.format);
     return false;
   }
+  const float pnoise = 0.2f;
+  const float pswing = 0.4f;
+  const auto pixels = (uint8_t *)img.data;
+  const auto pcount = img.width * img.height;
   size_t diff = 0;
+  std::vector<size_t> ccount(pal.size());
   for (int y = 0; y < img.height; y++) {
     for (int x = 0; x < img.width; x++) {
       auto *p = pixels + stride * (y * img.width + x);
-      const auto ec = PColor{
-          exact(p[0]),
-          exact(p[1]),
-          exact(p[2]),
-      };
-      const auto i0 = nearest(ec);
+      const auto ec = exact(p[0], p[1], p[2]);
+      const auto i0 = nearest(ec, pal);
+      ccount[i0] += 1;
+    }
+  }
+  PColor med{0, 0, 0};
+  for (size_t i = 0; i < pal.size(); ++i) {
+    Log("    %ld : %ld", i, ccount[i]);
+    med += pal[i] * ccount[i];
+  }
+  med /= pcount;
+  for (int y = 0; y < img.height; y++) {
+    for (int x = 0; x < img.width; x++) {
+      auto *p = pixels + stride * (y * img.width + x);
+      const auto ec = exact(p[0], p[1], p[2]);
+      const auto cc = ec + (ec - med) * 0.7f;
+      const auto i0 = nearest(cc, pal);
       const auto n0 = pal[i0];
-      const auto mc = modulate(ec, n0, x, y, pswing);
-      const auto i1 = nearest(mc);
+      const auto mc = modulate(cc, n0, x, y, i0, pnoise, pswing);
+      const auto i1 = nearest(mc, pal);
       if (i0 != i1)
         diff++;
       const auto n1 = pal[i1];
@@ -239,6 +275,7 @@ bool palettize(Image &img, const std::vector<PColor> &pal) {
       p[2] = uint8_t(255.999f * n1.z);
     }
   }
+  const float mul = 100.0f / float(img.width * img.height);
   Log("  Diff -> %.01f%%", mul * diff);
   return true;
 }
@@ -330,10 +367,13 @@ int run(const po::variables_map &vm, const std::vector<std::string> &files) {
   Log("[Apply palette]");
   int idx{};
   for (auto &img : imgs) {
+	auto imgIdx = idx++;
     timeThis("  Apply palette", [&]() { return palettize(img, pal); });
-    const auto name = std::string("out" + std::to_string(idx++) + ".png");
-    timeThis("  Export image",
-             [&]() { return ExportImage(img, name.c_str()); });
+    const auto name = std::string("out_" + std::to_string(imgIdx) + ".png");
+    timeThis("  Export image", [&]() {
+      Log("  Saving %ld %s", imgIdx, name.c_str());
+      return ExportImage(img, name.c_str());
+    });
     UnloadImage(img);
   }
 
